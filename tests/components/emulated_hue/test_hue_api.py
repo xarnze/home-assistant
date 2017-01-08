@@ -1,7 +1,6 @@
 """The tests for the emulated Hue component."""
 import json
 
-import unittest
 from unittest.mock import patch
 import requests
 
@@ -23,388 +22,391 @@ BRIDGE_SERVER_PORT = get_test_instance_port()
 BRIDGE_URL_BASE = 'http://127.0.0.1:{}'.format(BRIDGE_SERVER_PORT) + '{}'
 JSON_HEADERS = {const.HTTP_HEADER_CONTENT_TYPE: const.CONTENT_TYPE_JSON}
 
+HASS = None
 
-class TestEmulatedHueExposedByDefault(unittest.TestCase):
-    """Test class for emulated hue component."""
 
-    @classmethod
-    def setUpClass(cls):
-        """Setup the class."""
-        cls.hass = hass = get_test_home_assistant()
+def setUpModule():
+    """Setup the class."""
+    global HASS
+    HASS = hass = get_test_home_assistant()
 
-        # We need to do this to get access to homeassistant/turn_(on,off)
-        run_coroutine_threadsafe(
-            core_components.async_setup(hass, {core.DOMAIN: {}}), hass.loop
-        ).result()
+    # We need to do this to get access to homeassistant/turn_(on,off)
+    run_coroutine_threadsafe(
+        core_components.async_setup(hass, {core.DOMAIN: {}}), hass.loop
+    ).result()
 
-        bootstrap.setup_component(
-            hass, http.DOMAIN,
-            {http.DOMAIN: {http.CONF_SERVER_PORT: HTTP_SERVER_PORT}})
+    bootstrap.setup_component(
+        hass, http.DOMAIN,
+        {http.DOMAIN: {http.CONF_SERVER_PORT: HTTP_SERVER_PORT}})
 
-        with patch('homeassistant.components'
-                   '.emulated_hue.UPNPResponderThread'):
-            bootstrap.setup_component(hass, emulated_hue.DOMAIN, {
-                emulated_hue.DOMAIN: {
-                    emulated_hue.CONF_LISTEN_PORT: BRIDGE_SERVER_PORT,
-                    emulated_hue.CONF_EXPOSE_BY_DEFAULT: True
-                }
-            })
-
-        bootstrap.setup_component(cls.hass, light.DOMAIN, {
-            'light': [
-                {
-                    'platform': 'demo',
-                }
-            ]
-        })
-
-        bootstrap.setup_component(cls.hass, script.DOMAIN, {
-            'script': {
-                'set_kitchen_light': {
-                    'sequence': [
-                        {
-                            'service_template':
-                                "light.turn_{{ requested_state }}",
-                            'data_template': {
-                                'entity_id': 'light.kitchen_lights',
-                                'brightness': "{{ requested_level }}"
-                                }
-                        }
-                    ]
-                }
+    with patch('homeassistant.components'
+               '.emulated_hue.UPNPResponderThread'):
+        bootstrap.setup_component(hass, emulated_hue.DOMAIN, {
+            emulated_hue.DOMAIN: {
+                emulated_hue.CONF_LISTEN_PORT: BRIDGE_SERVER_PORT,
+                emulated_hue.CONF_EXPOSE_BY_DEFAULT: True
             }
         })
 
-        bootstrap.setup_component(cls.hass, media_player.DOMAIN, {
-            'media_player': [
-                {
-                    'platform': 'demo',
-                }
-            ]
-        })
-
-        cls.hass.start()
-
-        # Kitchen light is explicitly excluded from being exposed
-        kitchen_light_entity = cls.hass.states.get('light.kitchen_lights')
-        attrs = dict(kitchen_light_entity.attributes)
-        attrs[emulated_hue.ATTR_EMULATED_HUE] = False
-        cls.hass.states.set(
-            kitchen_light_entity.entity_id, kitchen_light_entity.state,
-            attributes=attrs)
-
-        # Expose the script
-        script_entity = cls.hass.states.get('script.set_kitchen_light')
-        attrs = dict(script_entity.attributes)
-        attrs[emulated_hue.ATTR_EMULATED_HUE] = True
-        cls.hass.states.set(
-            script_entity.entity_id, script_entity.state, attributes=attrs
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        """Stop the class."""
-        cls.hass.stop()
-
-    def test_discover_lights(self):
-        """Test the discovery of lights."""
-        result = requests.get(
-            BRIDGE_URL_BASE.format('/api/username/lights'), timeout=5)
-
-        self.assertEqual(result.status_code, 200)
-        self.assertTrue('application/json' in result.headers['content-type'])
-
-        result_json = result.json()
-
-        # Make sure the lights we added to the config are there
-        self.assertTrue('light.ceiling_lights' in result_json)
-        self.assertTrue('light.bed_light' in result_json)
-        self.assertTrue('script.set_kitchen_light' in result_json)
-        self.assertTrue('light.kitchen_lights' not in result_json)
-        self.assertTrue('media_player.living_room' in result_json)
-        self.assertTrue('media_player.bedroom' in result_json)
-        self.assertTrue('media_player.walkman' in result_json)
-        self.assertTrue('media_player.lounge_room' in result_json)
-
-    def test_get_light_state(self):
-        """Test the getting of light state."""
-        # Turn office light on and set to 127 brightness
-        self.hass.services.call(
-            light.DOMAIN, const.SERVICE_TURN_ON,
+    bootstrap.setup_component(hass, light.DOMAIN, {
+        'light': [
             {
-                const.ATTR_ENTITY_ID: 'light.ceiling_lights',
-                light.ATTR_BRIGHTNESS: 127
-            },
-            blocking=True)
+                'platform': 'demo',
+            }
+        ]
+    })
 
-        office_json = self.perform_get_light_state('light.ceiling_lights', 200)
+    bootstrap.setup_component(hass, script.DOMAIN, {
+        'script': {
+            'set_kitchen_light': {
+                'sequence': [
+                    {
+                        'service_template':
+                            "light.turn_{{ requested_state }}",
+                        'data_template': {
+                            'entity_id': 'light.kitchen_lights',
+                            'brightness': "{{ requested_level }}"
+                            }
+                    }
+                ]
+            }
+        }
+    })
 
-        self.assertEqual(office_json['state'][HUE_API_STATE_ON], True)
-        self.assertEqual(office_json['state'][HUE_API_STATE_BRI], 127)
-
-        # Check all lights view
-        result = requests.get(
-            BRIDGE_URL_BASE.format('/api/username/lights'), timeout=5)
-
-        self.assertEqual(result.status_code, 200)
-        self.assertTrue('application/json' in result.headers['content-type'])
-
-        result_json = result.json()
-
-        self.assertTrue('light.ceiling_lights' in result_json)
-        self.assertEqual(
-            result_json['light.ceiling_lights']['state'][HUE_API_STATE_BRI],
-            127,
-        )
-
-        # Turn bedroom light off
-        self.hass.services.call(
-            light.DOMAIN, const.SERVICE_TURN_OFF,
+    bootstrap.setup_component(hass, media_player.DOMAIN, {
+        'media_player': [
             {
-                const.ATTR_ENTITY_ID: 'light.bed_light'
-            },
-            blocking=True)
+                'platform': 'demo',
+            }
+        ]
+    })
 
-        bedroom_json = self.perform_get_light_state('light.bed_light', 200)
+    hass.start()
 
-        self.assertEqual(bedroom_json['state'][HUE_API_STATE_ON], False)
-        self.assertEqual(bedroom_json['state'][HUE_API_STATE_BRI], 0)
+    # Kitchen light is explicitly excluded from being exposed
+    kitchen_light_entity = hass.states.get('light.kitchen_lights')
+    attrs = dict(kitchen_light_entity.attributes)
+    attrs[emulated_hue.ATTR_EMULATED_HUE] = False
+    hass.states.set(
+        kitchen_light_entity.entity_id, kitchen_light_entity.state,
+        attributes=attrs)
 
-        # Make sure kitchen light isn't accessible
-        kitchen_url = '/api/username/lights/{}'.format('light.kitchen_lights')
-        kitchen_result = requests.get(
-            BRIDGE_URL_BASE.format(kitchen_url), timeout=5)
+    # Expose the script
+    script_entity = hass.states.get('script.set_kitchen_light')
+    attrs = dict(script_entity.attributes)
+    attrs[emulated_hue.ATTR_EMULATED_HUE] = True
+    hass.states.set(
+        script_entity.entity_id, script_entity.state, attributes=attrs
+    )
 
-        self.assertEqual(kitchen_result.status_code, 404)
 
-    def test_put_light_state(self):
-        """Test the seeting of light states."""
-        self.perform_put_test_on_ceiling_lights()
+def tearDownModule():
+    """Stop module."""
+    global HASS
+    HASS.stop()
+    HASS = None
 
-        # Turn the bedroom light on first
-        self.hass.services.call(
-            light.DOMAIN, const.SERVICE_TURN_ON,
-            {const.ATTR_ENTITY_ID: 'light.bed_light',
-             light.ATTR_BRIGHTNESS: 153},
-            blocking=True)
 
-        bed_light = self.hass.states.get('light.bed_light')
-        self.assertEqual(bed_light.state, STATE_ON)
-        self.assertEqual(bed_light.attributes[light.ATTR_BRIGHTNESS], 153)
+def test_discover_lights():
+    """Test the discovery of lights."""
+    result = requests.get(
+        BRIDGE_URL_BASE.format('/api/username/lights'), timeout=5)
 
-        # Go through the API to turn it off
-        bedroom_result = self.perform_put_light_state(
-            'light.bed_light', False)
+    assert result.status_code == 200
+    assert 'application/json' in result.headers['content-type']
 
-        bedroom_result_json = bedroom_result.json()
+    result_json = result.json()
 
-        self.assertEqual(bedroom_result.status_code, 200)
-        self.assertTrue(
-            'application/json' in bedroom_result.headers['content-type'])
+    # Make sure the lights we added to the config are there
+    assert 'light.ceiling_lights' in result_json
+    assert 'light.bed_light' in result_json
+    assert 'script.set_kitchen_light' in result_json
+    assert 'light.kitchen_lights' not in result_json
+    assert 'media_player.living_room' in result_json
+    assert 'media_player.bedroom' in result_json
+    assert 'media_player.walkman' in result_json
+    assert 'media_player.lounge_room' in result_json
 
-        self.assertEqual(len(bedroom_result_json), 1)
 
-        # Check to make sure the state changed
-        bed_light = self.hass.states.get('light.bed_light')
-        self.assertEqual(bed_light.state, STATE_OFF)
+def test_get_light_state():
+    """Test the getting of light state."""
+    # Turn office light on and set to 127 brightness
+    HASS.services.call(
+        light.DOMAIN, const.SERVICE_TURN_ON,
+        {
+            const.ATTR_ENTITY_ID: 'light.ceiling_lights',
+            light.ATTR_BRIGHTNESS: 127
+        },
+        blocking=True)
 
-        # Make sure we can't change the kitchen light state
-        kitchen_result = self.perform_put_light_state(
-            'light.kitchen_light', True)
-        self.assertEqual(kitchen_result.status_code, 404)
+    office_json = perform_get_light_state('light.ceiling_lights', 200)
 
-    def test_put_light_state_script(self):
-        """Test the setting of script variables."""
-        # Turn the kitchen light off first
-        self.hass.services.call(
-            light.DOMAIN, const.SERVICE_TURN_OFF,
-            {const.ATTR_ENTITY_ID: 'light.kitchen_lights'},
-            blocking=True)
+    assert office_json['state'][HUE_API_STATE_ON] is True
+    assert office_json['state'][HUE_API_STATE_BRI] == 127
 
-        # Emulated hue converts 0-100% to 0-255.
-        level = 23
-        brightness = round(level * 255 / 100)
+    # Check all lights view
+    result = requests.get(
+        BRIDGE_URL_BASE.format('/api/username/lights'), timeout=5)
 
-        script_result = self.perform_put_light_state(
-            'script.set_kitchen_light', True, brightness)
+    assert result.status_code == 200
+    assert 'application/json' in result.headers['content-type']
 
-        script_result_json = script_result.json()
+    result_json = result.json()
 
-        self.assertEqual(script_result.status_code, 200)
-        self.assertEqual(len(script_result_json), 2)
+    assert 'light.ceiling_lights' in result_json
+    assert result_json['light.ceiling_lights']['state'][HUE_API_STATE_BRI] == \
+        127
 
-        kitchen_light = self.hass.states.get('light.kitchen_lights')
-        self.assertEqual(kitchen_light.state, 'on')
-        self.assertEqual(
-            kitchen_light.attributes[light.ATTR_BRIGHTNESS],
-            level)
+    # Turn bedroom light off
+    HASS.services.call(
+        light.DOMAIN, const.SERVICE_TURN_OFF,
+        {
+            const.ATTR_ENTITY_ID: 'light.bed_light'
+        },
+        blocking=True)
 
-    def test_put_light_state_media_player(self):
-        """Test turning on media player and setting volume."""
-        # Turn the music player off first
-        self.hass.services.call(
-            media_player.DOMAIN, const.SERVICE_TURN_OFF,
-            {const.ATTR_ENTITY_ID: 'media_player.walkman'},
-            blocking=True)
+    bedroom_json = perform_get_light_state('light.bed_light', 200)
 
-        # Emulated hue converts 0.0-1.0 to 0-255.
-        level = 0.25
-        brightness = round(level * 255)
+    assert bedroom_json['state'][HUE_API_STATE_ON] is False
+    assert bedroom_json['state'][HUE_API_STATE_BRI] == 0
 
-        mp_result = self.perform_put_light_state(
-            'media_player.walkman', True, brightness)
+    # Make sure kitchen light isn't accessible
+    kitchen_url = '/api/username/lights/{}'.format('light.kitchen_lights')
+    kitchen_result = requests.get(
+        BRIDGE_URL_BASE.format(kitchen_url), timeout=5)
 
-        mp_result_json = mp_result.json()
+    assert kitchen_result.status_code == 404
 
-        self.assertEqual(mp_result.status_code, 200)
-        self.assertEqual(len(mp_result_json), 2)
 
-        walkman = self.hass.states.get('media_player.walkman')
-        self.assertEqual(walkman.state, 'playing')
-        self.assertEqual(
-            walkman.attributes[media_player.ATTR_MEDIA_VOLUME_LEVEL],
-            level)
+def test_put_light_state():
+    """Test the seeting of light states."""
+    perform_put_test_on_ceiling_lights()
 
-    # pylint: disable=invalid-name
-    def test_put_with_form_urlencoded_content_type(self):
-        """Test the form with urlencoded content."""
-        # Needed for Alexa
-        self.perform_put_test_on_ceiling_lights(
-            'application/x-www-form-urlencoded')
+    # Turn the bedroom light on first
+    HASS.services.call(
+        light.DOMAIN, const.SERVICE_TURN_ON,
+        {const.ATTR_ENTITY_ID: 'light.bed_light',
+         light.ATTR_BRIGHTNESS: 153},
+        blocking=True)
 
-        # Make sure we fail gracefully when we can't parse the data
-        data = {'key1': 'value1', 'key2': 'value2'}
-        result = requests.put(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}/state'.format(
-                    'light.ceiling_lights')), data=data)
+    bed_light = HASS.states.get('light.bed_light')
+    assert bed_light.state == STATE_ON
+    assert bed_light.attributes[light.ATTR_BRIGHTNESS] == 153
 
-        self.assertEqual(result.status_code, 400)
+    # Go through the API to turn it off
+    bedroom_result = perform_put_light_state(
+        'light.bed_light', False)
 
-    def test_entity_not_found(self):
-        """Test for entity which are not found."""
-        result = requests.get(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}'.format("not.existant_entity")),
-            timeout=5)
+    bedroom_result_json = bedroom_result.json()
 
-        self.assertEqual(result.status_code, 404)
+    assert bedroom_result.status_code == 200
+    assert 'application/json' in bedroom_result.headers['content-type']
 
-        result = requests.put(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}/state'.format("non.existant_entity")),
-            timeout=5)
+    assert len(bedroom_result_json) == 1
 
-        self.assertEqual(result.status_code, 404)
+    # Check to make sure the state changed
+    bed_light = HASS.states.get('light.bed_light')
+    assert bed_light.state == STATE_OFF
 
-    def test_allowed_methods(self):
-        """Test the allowed methods."""
-        result = requests.get(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}/state'.format(
-                    "light.ceiling_lights")))
+    # Make sure we can't change the kitchen light state
+    kitchen_result = perform_put_light_state(
+        'light.kitchen_light', True)
+    assert kitchen_result.status_code == 404
 
-        self.assertEqual(result.status_code, 405)
 
-        result = requests.put(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}'.format("light.ceiling_lights")),
-            data={'key1': 'value1'})
+def test_put_light_state_script():
+    """Test the setting of script variables."""
+    # Turn the kitchen light off first
+    HASS.services.call(
+        light.DOMAIN, const.SERVICE_TURN_OFF,
+        {const.ATTR_ENTITY_ID: 'light.kitchen_lights'},
+        blocking=True)
 
-        self.assertEqual(result.status_code, 405)
+    # Emulated hue converts 0-100% to 0-255.
+    level = 23
+    brightness = round(level * 255 / 100)
 
-        result = requests.put(
-            BRIDGE_URL_BASE.format('/api/username/lights'),
-            data={'key1': 'value1'})
+    script_result = perform_put_light_state(
+        'script.set_kitchen_light', True, brightness)
 
-        self.assertEqual(result.status_code, 405)
+    script_result_json = script_result.json()
 
-    def test_proper_put_state_request(self):
-        """Test the request to set the state."""
-        # Test proper on value parsing
-        result = requests.put(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}/state'.format(
-                    'light.ceiling_lights')),
-            data=json.dumps({HUE_API_STATE_ON: 1234}))
+    assert script_result.status_code == 200
+    assert len(script_result_json) == 2
 
-        self.assertEqual(result.status_code, 400)
+    kitchen_light = HASS.states.get('light.kitchen_lights')
+    assert kitchen_light.state == 'on'
+    assert kitchen_light.attributes[light.ATTR_BRIGHTNESS] == level
 
-        # Test proper brightness value parsing
-        result = requests.put(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}/state'.format(
-                    'light.ceiling_lights')), data=json.dumps({
-                        HUE_API_STATE_ON: True,
-                        HUE_API_STATE_BRI: 'Hello world!'
-                    }))
 
-        self.assertEqual(result.status_code, 400)
+def test_put_light_state_media_player():
+    """Test turning on media player and setting volume."""
+    # Turn the music player off first
+    HASS.services.call(
+        media_player.DOMAIN, const.SERVICE_TURN_OFF,
+        {const.ATTR_ENTITY_ID: 'media_player.walkman'},
+        blocking=True)
 
-    # pylint: disable=invalid-name
-    def perform_put_test_on_ceiling_lights(self,
-                                           content_type='application/json'):
-        """Test the setting of a light."""
-        # Turn the office light off first
-        self.hass.services.call(
-            light.DOMAIN, const.SERVICE_TURN_OFF,
-            {const.ATTR_ENTITY_ID: 'light.ceiling_lights'},
-            blocking=True)
+    # Emulated hue converts 0.0-1.0 to 0-255.
+    level = 0.25
+    brightness = round(level * 255)
 
-        ceiling_lights = self.hass.states.get('light.ceiling_lights')
-        self.assertEqual(ceiling_lights.state, STATE_OFF)
+    mp_result = perform_put_light_state(
+        'media_player.walkman', True, brightness)
 
-        # Go through the API to turn it on
-        office_result = self.perform_put_light_state(
-            'light.ceiling_lights', True, 56, content_type)
+    mp_result_json = mp_result.json()
 
-        office_result_json = office_result.json()
+    assert mp_result.status_code == 200
+    assert len(mp_result_json) == 2
 
-        self.assertEqual(office_result.status_code, 200)
-        self.assertTrue(
-            'application/json' in office_result.headers['content-type'])
+    walkman = HASS.states.get('media_player.walkman')
+    assert walkman.state == 'playing'
+    assert walkman.attributes[media_player.ATTR_MEDIA_VOLUME_LEVEL] == level
 
-        self.assertEqual(len(office_result_json), 2)
 
-        # Check to make sure the state changed
-        ceiling_lights = self.hass.states.get('light.ceiling_lights')
-        self.assertEqual(ceiling_lights.state, STATE_ON)
-        self.assertEqual(ceiling_lights.attributes[light.ATTR_BRIGHTNESS], 56)
+# pylint: disable=invalid-name
+def test_put_with_form_urlencoded_content_type():
+    """Test the form with urlencoded content."""
+    # Needed for Alexa
+    perform_put_test_on_ceiling_lights(
+        'application/x-www-form-urlencoded')
 
-    def perform_get_light_state(self, entity_id, expected_status):
-        """Test the gettting of a light state."""
-        result = requests.get(
-            BRIDGE_URL_BASE.format(
-                '/api/username/lights/{}'.format(entity_id)), timeout=5)
+    # Make sure we fail gracefully when we can't parse the data
+    data = {'key1': 'value1', 'key2': 'value2'}
+    result = requests.put(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}/state'.format(
+                'light.ceiling_lights')), data=data)
 
-        self.assertEqual(result.status_code, expected_status)
+    assert result.status_code == 400
 
-        if expected_status == 200:
-            self.assertTrue(
-                'application/json' in result.headers['content-type'])
 
-            return result.json()
+def test_entity_not_found():
+    """Test for entity which are not found."""
+    result = requests.get(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}'.format("not.existant_entity")),
+        timeout=5)
 
-        return None
+    assert result.status_code == 404
 
-    # pylint: disable=no-self-use
-    def perform_put_light_state(self, entity_id, is_on, brightness=None,
-                                content_type='application/json'):
-        """Test the setting of a light state."""
-        url = BRIDGE_URL_BASE.format(
-            '/api/username/lights/{}/state'.format(entity_id))
+    result = requests.put(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}/state'.format("non.existant_entity")),
+        timeout=5)
 
-        req_headers = {'Content-Type': content_type}
+    assert result.status_code == 404
 
-        data = {HUE_API_STATE_ON: is_on}
 
-        if brightness is not None:
-            data[HUE_API_STATE_BRI] = brightness
+def test_allowed_methods():
+    """Test the allowed methods."""
+    result = requests.get(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}/state'.format(
+                "light.ceiling_lights")))
 
-        result = requests.put(
-            url, data=json.dumps(data), timeout=5, headers=req_headers)
+    assert result.status_code == 405
 
-        # Wait until state change is complete before continuing
-        self.hass.block_till_done()
+    result = requests.put(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}'.format("light.ceiling_lights")),
+        data={'key1': 'value1'})
 
-        return result
+    assert result.status_code == 405
+
+    result = requests.put(
+        BRIDGE_URL_BASE.format('/api/username/lights'),
+        data={'key1': 'value1'})
+
+    assert result.status_code == 405
+
+
+def test_proper_put_state_request():
+    """Test the request to set the state."""
+    # Test proper on value parsing
+    result = requests.put(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}/state'.format(
+                'light.ceiling_lights')),
+        data=json.dumps({HUE_API_STATE_ON: 1234}))
+
+    assert result.status_code == 400
+
+    # Test proper brightness value parsing
+    result = requests.put(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}/state'.format(
+                'light.ceiling_lights')), data=json.dumps({
+                    HUE_API_STATE_ON: True,
+                    HUE_API_STATE_BRI: 'Hello world!'
+                }))
+
+    assert result.status_code == 400
+
+
+# pylint: disable=invalid-name
+def perform_put_test_on_ceiling_lights(content_type='application/json'):
+    """Test the setting of a light."""
+    # Turn the office light off first
+    HASS.services.call(
+        light.DOMAIN, const.SERVICE_TURN_OFF,
+        {const.ATTR_ENTITY_ID: 'light.ceiling_lights'},
+        blocking=True)
+
+    ceiling_lights = HASS.states.get('light.ceiling_lights')
+    assert ceiling_lights.state == STATE_OFF
+
+    # Go through the API to turn it on
+    office_result = perform_put_light_state(
+        'light.ceiling_lights', True, 56, content_type)
+
+    office_result_json = office_result.json()
+
+    assert office_result.status_code == 200
+    assert 'application/json' in office_result.headers['content-type']
+
+    assert len(office_result_json) == 2
+
+    # Check to make sure the state changed
+    ceiling_lights = HASS.states.get('light.ceiling_lights')
+    assert ceiling_lights.state == STATE_ON
+    assert ceiling_lights.attributes[light.ATTR_BRIGHTNESS] == 56
+
+
+def perform_get_light_state(entity_id, expected_status):
+    """Test the gettting of a light state."""
+    result = requests.get(
+        BRIDGE_URL_BASE.format(
+            '/api/username/lights/{}'.format(entity_id)), timeout=5)
+
+    assert result.status_code == expected_status
+
+    if expected_status == 200:
+        assert 'application/json' in result.headers['content-type']
+
+        return result.json()
+
+    return None
+
+
+# pylint: disable=no-self-use
+def perform_put_light_state(entity_id, is_on, brightness=None,
+                            content_type='application/json'):
+    """Test the setting of a light state."""
+    url = BRIDGE_URL_BASE.format(
+        '/api/username/lights/{}/state'.format(entity_id))
+
+    req_headers = {'Content-Type': content_type}
+
+    data = {HUE_API_STATE_ON: is_on}
+
+    if brightness is not None:
+        data[HUE_API_STATE_BRI] = brightness
+
+    result = requests.put(
+        url, data=json.dumps(data), timeout=5, headers=req_headers)
+
+    # Wait until state change is complete before continuing
+    HASS.block_till_done()
+
+    return result

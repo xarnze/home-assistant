@@ -11,7 +11,7 @@ from homeassistant.components.tts import Provider, PLATFORM_SCHEMA
 import homeassistant.helpers.config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
-REQUIREMENTS = ['boto3==1.4.7']
+REQUIREMENTS = ['boto3==1.9.16']
 
 CONF_REGION = 'region_name'
 CONF_ACCESS_KEY_ID = 'aws_access_key_id'
@@ -38,7 +38,8 @@ SUPPORTED_VOICES = ['Geraint', 'Gwyneth', 'Mads', 'Naja', 'Hans', 'Marlene',
                     'Chantal', 'Celine', 'Mathieu', 'Dora', 'Karl', 'Carla',
                     'Giorgio', 'Mizuki', 'Liv', 'Lotte', 'Ruben', 'Ewa',
                     'Jacek', 'Jan', 'Maja', 'Ricardo', 'Vitoria', 'Cristiano',
-                    'Ines', 'Carmen', 'Maxim', 'Tatyana', 'Astrid', 'Filiz']
+                    'Ines', 'Carmen', 'Maxim', 'Tatyana', 'Astrid', 'Filiz',
+                    'Aditi', 'Léa', 'Matthew', 'Seoyeon', 'Takumi', 'Vicki']
 
 SUPPORTED_OUTPUT_FORMATS = ['mp3', 'ogg_vorbis', 'pcm']
 

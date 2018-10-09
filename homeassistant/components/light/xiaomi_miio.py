@@ -39,10 +39,11 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
          'philips.light.zyceiling',
          'philips.light.bulb',
          'philips.light.candle',
-         'philips.light.candle2']),
+         'philips.light.candle2',
+         'philips.light.mono1']),
 })
 
-REQUIREMENTS = ['python-miio==0.4.0', 'construct==2.9.41']
+REQUIREMENTS = ['python-miio==0.4.2', 'construct==2.9.41']
 
 # The light does not accept cct values < 1
 CCT_MIN = 1
@@ -100,7 +101,7 @@ SERVICE_TO_METHOD = {
 }
 
 
-async def async_setup_platform(hass, config, async_add_devices,
+async def async_setup_platform(hass, config, async_add_entities,
                                discovery_info=None):
     """Set up the light from config."""
     from miio import Device, DeviceException
@@ -157,6 +158,12 @@ async def async_setup_platform(hass, config, async_add_devices,
         device = XiaomiPhilipsBulb(name, light, model, unique_id)
         devices.append(device)
         hass.data[DATA_KEY][host] = device
+    elif model == 'philips.light.mono1':
+        from miio import PhilipsBulb
+        light = PhilipsBulb(host, token)
+        device = XiaomiPhilipsGenericLight(name, light, model, unique_id)
+        devices.append(device)
+        hass.data[DATA_KEY][host] = device
     else:
         _LOGGER.error(
             'Unsupported device found! Please create an issue at '
@@ -164,7 +171,7 @@ async def async_setup_platform(hass, config, async_add_devices,
             'and provide the following data: %s', model)
         return False
 
-    async_add_devices(devices, update_before_add=True)
+    async_add_entities(devices, update_before_add=True)
 
     async def async_service_handler(service):
         """Map services to methods on Xiaomi Philips Lights."""
@@ -713,7 +720,7 @@ class XiaomiPhilipsEyecareLampAmbientLight(XiaomiPhilipsAbstractLight):
             _LOGGER.debug("Got new state: %s", state)
 
             self._available = True
-            self._state = state.eyecare
+            self._state = state.ambient
             self._brightness = ceil((255 / 100.0) * state.ambient_brightness)
 
         except DeviceException as ex:
